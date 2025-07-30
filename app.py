@@ -4,78 +4,70 @@ import numpy as np
 import pickle
 import time
 import tkinter as tk
-from tkinter import font as tkfont
 from PIL import Image, ImageTk
 from utils.sentence_builder import SentenceBuilder
 
-#load model
+# Load model and label encoder
 with open("models/gesture_model.pkl", "rb") as f:
     model, le = pickle.load(f)
 
-#mediapipe
+# Initialize MediaPipe
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands()
 mp_draw = mp.solutions.drawing_utils
 sb = SentenceBuilder()
 
-#opencv
+# OpenCV camera
 cap = cv2.VideoCapture(0)
 last_pred_time = 0
-pred_interval = 2
+pred_interval = 1  # Prediction interval in seconds
 current_word = ""
+confidence_threshold = 0.7
 
-#tkinter ui
+# Tkinter UI
 root = tk.Tk()
-root.title("Sign Language to Text Converter")
+root.title("Sign Language to Text")
+root.geometry("960x700")
 root.configure(bg="#121212")
-root.geometry("960x650")
 
-#fonts and colours
-FONT_MAIN = ("Calibri", 18)
-FONT_SUB = ("Calibri", 14)
-FONT_BTN = ("Calibri", 12, "bold")
-COLOR_BG = "#121212"
-COLOR_TEXT = "#FFFFFF"
-COLOR_ACCENT = "#00BFFF"
-COLOR_BTN = "#1F1F1F"
-COLOR_BTN_HOVER = "#2D2D2D"
-COLOR_BTN_ACTIVE = "#3A3A3A"
-COLOR_QUIT = "#BE0000"
-COLOR_QUIT_HOVER = "#770000"
-COLOR_QUIT_ACTIVE = "#990000"
-
-#hover effect
-def add_hover_effect(button, bg_normal, bg_hover, bg_active):
-    def on_enter(e):
-        button['background'] = bg_hover
-    def on_leave(e):
-        button['background'] = bg_normal
-    def on_press(e):
-        button['background'] = bg_active
-    def on_release(e):
-        button['background'] = bg_hover
-    button.bind("<Enter>", on_enter)
-    button.bind("<Leave>", on_leave)
-    button.bind("<ButtonPress-1>", on_press)
-    button.bind("<ButtonRelease-1>", on_release)
-
-#webcam
-video_label = tk.Label(root, bg=COLOR_BG)
+# Webcam frame
+video_label = tk.Label(root, bg="#121212")
 video_label.pack(pady=(10, 5))
 
-#sentence
+# Sentence and word labels
 sentence_var = tk.StringVar()
-sentence_label = tk.Label(root, textvariable=sentence_var, font=FONT_MAIN,
-                          fg=COLOR_ACCENT, bg=COLOR_BG)
+sentence_label = tk.Label(root, textvariable=sentence_var, font=("Calibri", 18), fg="#00BFFF", bg="#121212")
 sentence_label.pack(pady=5)
 
-#current word
 current_var = tk.StringVar()
-current_label = tk.Label(root, textvariable=current_var, font=FONT_SUB,
-                         fg=COLOR_TEXT, bg=COLOR_BG)
+current_label = tk.Label(root, textvariable=current_var, font=("Calibri", 14), fg="#FFFFFF", bg="#121212")
 current_label.pack(pady=(0, 10))
 
-#loop to update
+# Buttons
+def reset_sentence():
+    sb.reset()
+    sentence_var.set("Sentence : ")
+    current_var.set("")
+
+def quit_app():
+    cap.release()
+    cv2.destroyAllWindows()
+    root.destroy()
+
+btn_frame = tk.Frame(root, bg="#121212")
+btn_frame.pack(pady=10)
+
+reset_btn = tk.Button(btn_frame, text="RESET", command=reset_sentence,
+                      font=("Calibri", 12, "bold"), bg="#1F1F1F", fg="#FFFFFF",
+                      padx=20, pady=8, relief="flat")
+reset_btn.pack(side=tk.LEFT, padx=20)
+
+quit_btn = tk.Button(btn_frame, text="QUIT", command=quit_app,
+                     font=("Calibri", 12, "bold"), bg="#BE0000", fg="#FFFFFF",
+                     padx=20, pady=8, relief="flat")
+quit_btn.pack(side=tk.RIGHT, padx=20)
+
+# Update loop
 def update():
     global last_pred_time, current_word
     ret, frame = cap.read()
@@ -90,16 +82,24 @@ def update():
         for hand in result.multi_hand_landmarks:
             mp_draw.draw_landmarks(frame, hand, mp_hands.HAND_CONNECTIONS)
             landmarks = [coord for lm in hand.landmark for coord in (lm.x, lm.y, lm.z)]
-            if len(landmarks) == 63 and (time.time() - last_pred_time) > pred_interval:
-                pred = model.predict([landmarks])[0]
-                current_word = le.inverse_transform([pred])[0]
-                sb.add_word(current_word)
-                last_pred_time = time.time()
 
+            if len(landmarks) == 63 and (time.time() - last_pred_time) > pred_interval:
+                probs = model.predict_proba([landmarks])[0]
+                max_prob = np.max(probs)
+                pred_index = np.argmax(probs)
+
+                print(f"[INFO] Confidence: {max_prob:.2f}")
+
+                if max_prob > confidence_threshold:
+                    current_word = le.inverse_transform([pred_index])[0]
+                    sb.add_word(current_word)
+                    last_pred_time = time.time()
+
+    # Update sentence and word
     sentence_var.set("Sentence : " + sb.get_sentence())
     current_var.set(f"Current Word : {current_word}")
 
-    #tkinter image
+    # Convert image for Tkinter
     img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     img = Image.fromarray(img)
     imgtk = ImageTk.PhotoImage(image=img)
@@ -108,36 +108,8 @@ def update():
 
     root.after(10, update)
 
-#button fns
-def reset_sentence():
-    sb.reset()
-    sentence_var.set("Sentence : ")
-    current_var.set("")
-
-def quit_app():
-    cap.release()
-    cv2.destroyAllWindows()
-    root.destroy()
-
-#buttons
-btn_frame = tk.Frame(root, bg=COLOR_BG)
-btn_frame.pack(pady=20)
-
-reset_btn = tk.Button(btn_frame, text="RESET", font=FONT_BTN,
-                      bg=COLOR_BTN, fg=COLOR_TEXT, relief="flat",
-                      padx=20, pady=8, command=reset_sentence)
-reset_btn.pack(side=tk.LEFT, padx=40)
-add_hover_effect(reset_btn, COLOR_BTN, COLOR_BTN_HOVER, COLOR_BTN_ACTIVE)
-
-quit_btn = tk.Button(btn_frame, text="QUIT", font=FONT_BTN,
-                     bg=COLOR_QUIT, fg="#FFFFFF", relief="flat",
-                     padx=20, pady=8, command=quit_app)
-quit_btn.pack(side=tk.RIGHT, padx=40)
-add_hover_effect(quit_btn, COLOR_QUIT, COLOR_QUIT_HOVER, COLOR_QUIT_ACTIVE)
-
-#run
+# Run app
 update()
 root.mainloop()
-
 cap.release()
 cv2.destroyAllWindows()
